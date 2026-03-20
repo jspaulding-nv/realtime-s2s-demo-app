@@ -28,12 +28,12 @@ class AudioChunkIterator:
         """Add an audio chunk to be processed."""
         if not self._stopped:
             self._chunk_count += 1
-            print(f"[Riva] Audio chunk {self._chunk_count} added, {len(chunk)} bytes")
+            logger.debug(f"Audio chunk {self._chunk_count} added, {len(chunk)} bytes")
             self._queue.put(chunk)
 
     def stop(self) -> None:
         """Signal the iterator to stop."""
-        print("[Riva] Iterator stopped")
+        logger.debug("Iterator stopped")
         self._stopped = True
         self._queue.put(None)  # Sentinel to unblock iteration
 
@@ -46,12 +46,12 @@ class AudioChunkIterator:
             try:
                 chunk = self._queue.get(timeout=0.5)
                 if chunk is None:
-                    print("[Riva] Got stop sentinel")
+                    logger.debug("Got stop sentinel")
                     raise StopIteration
                 return chunk
             except Empty:
                 if self._stopped:
-                    print("[Riva] Iterator stopped during wait")
+                    logger.debug("Iterator stopped during wait")
                     raise StopIteration
                 # Keep waiting for more chunks
                 continue
@@ -96,7 +96,7 @@ class RivaS2SClient:
         lang_config = SUPPORTED_LANGUAGES.get(target_language, SUPPORTED_LANGUAGES["es-US"])
         voice_name = lang_config["voice"]
 
-        print(f"[Riva] Creating config: {riva_config.source_language} -> {target_language}, voice: {voice_name}")
+        logger.info(f"Creating config: {riva_config.source_language} -> {target_language}, voice: {voice_name}")
 
         # Endpointing config — reduce stalls by detecting silence faster.
         # Default server config waits too long for sentence boundaries,
