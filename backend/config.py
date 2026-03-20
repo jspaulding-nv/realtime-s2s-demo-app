@@ -16,7 +16,7 @@ class AudioConfig:
 @dataclass
 class RivaConfig:
     """Riva service configuration."""
-    uri: str = "10.1.90.249:50051"
+    uri: str = "localhost:50051"
     model: str = "megatronnmt_any_any_1b"
     source_language: str = "en-US"
 

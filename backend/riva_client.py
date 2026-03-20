@@ -94,12 +94,15 @@ class RivaS2SClient:
 
         print(f"[Riva] Creating config: {riva_config.source_language} -> {target_language}, voice: {voice_name}")
 
-        # Endpointing config — reduce stalls by detecting silence faster
+        # Endpointing config — reduce stalls by detecting silence faster.
         # Default server config waits too long for sentence boundaries,
         # causing 15-35s stalls in continuous speech (e.g., sermons).
+        # start_history/start_threshold raised from 100ms/0.3 to prevent ASR from
+        # transcribing brief filler sounds ("uh") as standalone Chinese characters
+        # (e.g., '呃'), which crash the TTS TRT-LLM encoder.
         endpointing_config = riva_asr_pb2.EndpointingConfig(
-            start_history=100,       # 100ms — very fast speech start detection
-            start_threshold=0.3,     # 30% non-blank frames triggers start
+            start_history=300,       # 300ms — require sustained speech to start utterance
+            start_threshold=0.5,     # 50% non-blank frames triggers start (was 30%)
             stop_history=300,        # 300ms silence triggers final result
             stop_threshold=0.5,      # 50% blank frames triggers end
             stop_history_eou=200,    # 200ms early end-of-utterance
