@@ -1,31 +1,34 @@
 """FastAPI backend for real-time speech-to-speech translation."""
 
 import json
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
-from config import SUPPORTED_LANGUAGES, audio_config
+from config import SUPPORTED_LANGUAGES, audio_config, setup_logging
 from riva_client import riva_client
 from websocket_handler import session_manager, SessionStatus
 from timing_logger import timing_logger
+
+setup_logging()
+logger = logging.getLogger("main")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
     # Startup: connect to Riva
-    print("Connecting to Riva services...")
     if riva_client.connect():
-        print("Connected to Riva successfully")
+        pass  # riva logger handles the success message
     else:
-        print("Warning: Failed to connect to Riva - will retry on first request")
+        logger.warning("Failed to connect to Riva - will retry on first request")
 
     yield
 
     # Shutdown: disconnect from Riva
-    print("Disconnecting from Riva...")
+    logger.info("Disconnecting from Riva...")
     riva_client.disconnect()
 
 
@@ -156,9 +159,9 @@ async def websocket_translate(websocket: WebSocket):
                 await session.process_audio(message["bytes"])
 
     except WebSocketDisconnect:
-        print("Client disconnected")
+        logger.info("Client disconnected")
     except Exception as e:
-        print(f"WebSocket error: {e}")
+        logger.error(f"WebSocket error: {e}")
         await session.send_error(str(e))
     finally:
         await session_manager.remove_session(session)

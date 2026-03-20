@@ -1,6 +1,7 @@
 """WebSocket session management for translation streams."""
 
 import asyncio
+import logging
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
@@ -8,6 +9,8 @@ from fastapi import WebSocket
 from starlette.websockets import WebSocketState
 
 from riva_client import riva_client, AudioChunkIterator
+
+logger = logging.getLogger("ws")
 from audio_processor import float32_to_int16, calculate_rms
 from timing_logger import timing_logger
 
@@ -69,10 +72,10 @@ class TranslationSession:
         """Send translated audio to client."""
         if self._is_websocket_open():
             try:
-                print(f"[WS] Sending {len(audio_data)} bytes of audio to client")
+                logger.debug(f"Sending {len(audio_data)} bytes of audio to client")
                 await self.websocket.send_bytes(audio_data)
             except Exception as e:
-                print(f"[WS] Failed to send audio: {e}")
+                logger.error(f"Failed to send audio: {e}")
 
     async def send_level(self, rms: float) -> None:
         """Send audio level to client."""
@@ -88,11 +91,11 @@ class TranslationSession:
     async def start_stream(self, target_language: str) -> None:
         """Start a new translation stream."""
         async with self._lock:
-            print(f"[WS] start_stream called: target={target_language}, current_status={self.status}")
+            logger.info(f"start_stream called: target={target_language}, current_status={self.status}")
 
             # Stop any existing stream first
             if self.chunk_iterator:
-                print("[WS] Stopping existing stream before starting new one")
+                logger.info("Stopping existing stream before starting new one")
                 self.chunk_iterator.stop()
                 self.chunk_iterator = None
 
@@ -130,7 +133,7 @@ class TranslationSession:
     async def stop_stream(self) -> None:
         """Stop the current translation stream and notify client."""
         async with self._lock:
-            print(f"[WS] stop_stream called, current_status={self.status}")
+            logger.info(f"stop_stream called, current_status={self.status}")
             if self.chunk_iterator:
                 self.chunk_iterator.stop()
                 self.chunk_iterator = None
@@ -146,12 +149,12 @@ class TranslationSession:
     async def process_audio(self, audio_bytes: bytes) -> None:
         """Process incoming audio chunk from client."""
         if self.status != SessionStatus.LISTENING or not self.chunk_iterator:
-            print(f"[WS] Ignoring audio: status={self.status}, has_iterator={self.chunk_iterator is not None}")
+            logger.warning(f"Ignoring audio: status={self.status}, has_iterator={self.chunk_iterator is not None}")
             return
 
         # Audio is already Int16 from the browser (converted in AudioWorklet)
         # Just pass it through to Riva
-        print(f"[WS] Received {len(audio_bytes)} bytes (Int16) from client")
+        logger.debug(f"Received {len(audio_bytes)} bytes (Int16) from client")
 
         # Timing instrumentation
         chunk_idx = timing_logger.log_audio_received(len(audio_bytes))

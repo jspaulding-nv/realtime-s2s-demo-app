@@ -162,6 +162,32 @@ class AudioConfig:
     bytes_per_sample: int = 2     # Int16
 ```
 
+### Logging
+
+The backend defaults to `INFO` level — connection events, stream lifecycle, and watchdog
+alerts. Set `LOG_LEVEL=DEBUG` to see per-chunk and per-response detail:
+
+```bash
+LOG_LEVEL=DEBUG uvicorn main:app --reload --port 8000
+```
+
+### TTS Watchdog
+
+`WatchdogConfig` in `backend/config.py` controls zombie TTS detection and automatic recovery:
+
+```python
+@dataclass
+class WatchdogConfig:
+    zombie_timeout: int = 60      # seconds with no TTS response → restart container
+    check_interval: int = 30      # seconds between watchdog checks
+    tts_container: str = "magpie-tts-multilingual"
+    tts_grpc_addr: str = "localhost:50053"
+    recovery_timeout: int = 120   # seconds to wait for TTS to become healthy again
+```
+
+If the TTS container enters a zombie state (no audio output despite receiving input), the
+watchdog automatically restarts it and resets the NMT gRPC channel to resume translation.
+
 ## API Endpoints
 
 ### REST

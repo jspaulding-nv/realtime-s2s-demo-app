@@ -1,5 +1,7 @@
 """Configuration settings for the speech-to-speech translation backend."""
 
+import logging
+import os
 from dataclasses import dataclass
 from typing import Dict
 
@@ -19,6 +21,16 @@ class RivaConfig:
     uri: str = "localhost:50051"
     model: str = "megatronnmt_any_any_1b"
     source_language: str = "en-US"
+
+
+@dataclass
+class WatchdogConfig:
+    """TTS zombie watchdog configuration."""
+    zombie_timeout: int = 60      # seconds with no response → restart TTS
+    check_interval: int = 30      # seconds between watchdog checks
+    tts_container: str = "magpie-tts-multilingual"
+    tts_grpc_addr: str = "localhost:50053"
+    recovery_timeout: int = 120   # seconds to wait for TTS to become healthy
 
 
 # Supported target languages with their TTS voice names
@@ -41,3 +53,14 @@ SUPPORTED_LANGUAGES: Dict[str, dict] = {
 # Default configuration instances
 audio_config = AudioConfig()
 riva_config = RivaConfig()
+watchdog_config = WatchdogConfig()
+
+
+def setup_logging() -> None:
+    """Configure logging level from LOG_LEVEL env var (default: INFO)."""
+    level = os.getenv("LOG_LEVEL", "INFO").upper()
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )

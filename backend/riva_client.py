@@ -1,6 +1,8 @@
 """Riva S2S client wrapper adapted from realtime_s2s.py."""
 
-import asyncio
+import logging
+import subprocess
+import time
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue, Empty
 from typing import Optional, Callable
@@ -9,7 +11,9 @@ import riva.client
 import riva.client.proto.riva_asr_pb2 as riva_asr_pb2
 import riva.client.proto.riva_nmt_pb2 as riva_nmt_pb2
 
-from config import audio_config, riva_config, SUPPORTED_LANGUAGES
+from config import audio_config, riva_config, watchdog_config, SUPPORTED_LANGUAGES
+
+logger = logging.getLogger("riva")
 
 
 class AudioChunkIterator:
@@ -57,7 +61,7 @@ class RivaS2SClient:
     """Wrapper for Riva Speech-to-Speech translation."""
 
     def __init__(self):
-        self._executor = ThreadPoolExecutor(max_workers=2)
+        self._executor = ThreadPoolExecutor(max_workers=4)
         self._nmt_client: Optional[riva.client.NeuralMachineTranslationClient] = None
         self._auth: Optional[riva.client.Auth] = None
         self._connected = False
@@ -65,14 +69,14 @@ class RivaS2SClient:
     def connect(self) -> bool:
         """Connect to Riva services."""
         try:
-            print(f"[Riva] Connecting to {riva_config.uri}...")
+            logger.info(f"Connecting to {riva_config.uri}...")
             self._auth = riva.client.Auth(uri=riva_config.uri)
             self._nmt_client = riva.client.NeuralMachineTranslationClient(self._auth)
             self._connected = True
-            print("[Riva] Connected successfully")
+            logger.info("Connected successfully")
             return True
         except Exception as e:
-            print(f"[Riva] Failed to connect: {e}")
+            logger.error(f"Failed to connect: {e}")
             self._connected = False
             return False
 
@@ -161,16 +165,16 @@ class RivaS2SClient:
             raise RuntimeError("Not connected to Riva")
 
         chunk_iterator = AudioChunkIterator()
+        last_response_time = [time.monotonic()]  # list so watchdog closure can mutate
+        total_responses = [0]                    # list so watchdog closure can read
 
         def run_translation():
             """Run the blocking Riva translation in a thread with auto-restart."""
-            print("[Riva] Starting translation thread")
-            total_responses = 0
+            logger.info("Starting translation thread")
             restart_count = 0
 
             while not chunk_iterator._stopped:
                 try:
-                    # Create fresh config for each stream session
                     config = self.create_s2s_config(target_language)
                     responses = self._nmt_client.streaming_s2s_response_generator(
                         audio_chunks=chunk_iterator,
@@ -178,36 +182,86 @@ class RivaS2SClient:
                     )
 
                     for response in responses:
-                        total_responses += 1
+                        total_responses[0] += 1
                         if response.speech and response.speech.audio:
-                            audio_len = len(response.speech.audio)
-                            print(f"[Riva] Response {total_responses}: got {audio_len} bytes of audio")
                             on_audio(response.speech.audio)
+                            last_response_time[0] = time.monotonic()
                         else:
-                            print(f"[Riva] Response {total_responses}: no audio")
+                            logger.debug(f"Response {total_responses[0]}: no audio")
 
-                    # for-loop ended normally = ASR endpointing closed the stream
                     if not chunk_iterator._stopped:
                         restart_count += 1
-                        print(f"[Riva] ASR endpointing — restarting stream (#{restart_count})")
+                        logger.info(f"ASR endpointing — restarting stream (#{restart_count})")
                         continue
                     else:
-                        print(f"[Riva] Stream stopped normally, {total_responses} total responses")
+                        logger.info(f"Stream stopped normally, {total_responses[0]} total responses")
                         break
 
                 except Exception as e:
                     if chunk_iterator._stopped:
-                        print(f"[Riva] Stream ended: {e}")
+                        logger.info(f"Stream ended: {e}")
                         break
                     restart_count += 1
-                    print(f"[Riva] Error (restarting #{restart_count}): {e}")
+                    logger.warning(f"Error (restarting #{restart_count}): {e}")
                     continue
 
-            print(f"[Riva] Translation thread exiting. "
-                  f"{total_responses} responses, {restart_count} restarts")
+            logger.info(f"Translation thread exiting. "
+                        f"{total_responses[0]} responses, {restart_count} restarts")
 
-        # Run translation in background thread
+        def watchdog():
+            """Detect TTS zombie state and restart the container to recover."""
+            logger.info("Watchdog started")
+            while not chunk_iterator._stopped:
+                time.sleep(watchdog_config.check_interval)
+                if chunk_iterator._stopped:
+                    break
+                if total_responses[0] == 0:
+                    continue  # still in warmup, no baseline yet
+                silent_for = time.monotonic() - last_response_time[0]
+                if silent_for < watchdog_config.zombie_timeout:
+                    continue
+                logger.warning(
+                    f"TTS zombie detected (no response for {silent_for:.0f}s)"
+                    f" — restarting {watchdog_config.tts_container}"
+                )
+                try:
+                    subprocess.run(
+                        ["docker", "restart", watchdog_config.tts_container],
+                        timeout=30, check=True,
+                    )
+                except Exception as e:
+                    logger.error(f"docker restart failed: {e}")
+                    last_response_time[0] = time.monotonic()
+                    continue
+
+                # Wait for TTS gRPC healthcheck to pass
+                deadline = time.monotonic() + watchdog_config.recovery_timeout
+                while time.monotonic() < deadline and not chunk_iterator._stopped:
+                    result = subprocess.run(
+                        ["/bin/grpc_health_probe", "-addr", watchdog_config.tts_grpc_addr],
+                        capture_output=True,
+                    )
+                    if result.returncode == 0:
+                        logger.info("TTS healthy — resuming")
+                        break
+                    time.sleep(5)
+                else:
+                    logger.error("TTS did not recover in time")
+
+                # Force-close the NMT gRPC channel so the blocked
+                # `for response in responses:` loop receives a channel-closed
+                # error and restarts the stream.
+                logger.warning("Resetting NMT gRPC channel to unblock translation thread")
+                self.disconnect()
+                self.connect()
+
+                last_response_time[0] = time.monotonic()
+
+            logger.info("Watchdog stopped")
+
+        # Run translation and watchdog in background threads
         self._executor.submit(run_translation)
+        self._executor.submit(watchdog)
 
         return chunk_iterator
 
