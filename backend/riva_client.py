@@ -105,8 +105,8 @@ class RivaS2SClient:
         # transcribing brief filler sounds ("uh") as standalone Chinese characters
         # (e.g., '呃'), which crash the TTS TRT-LLM encoder.
         endpointing_config = riva_asr_pb2.EndpointingConfig(
-            start_history=500,       # 500ms — require sustained speech to start utterance (was 300ms)
-            start_threshold=0.6,     # 60% non-blank frames triggers start (was 50%)
+            start_history=300,       # 300ms — require sustained speech to start utterance
+            start_threshold=0.5,     # 50% non-blank frames triggers start
             stop_history=300,        # 300ms silence triggers final result
             stop_threshold=0.5,      # 50% blank frames triggers end
             stop_history_eou=200,    # 200ms early end-of-utterance
