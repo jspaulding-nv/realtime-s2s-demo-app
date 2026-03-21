@@ -26,7 +26,7 @@ class RivaConfig:
 @dataclass
 class WatchdogConfig:
     """TTS zombie watchdog configuration."""
-    zombie_timeout: int = 60      # seconds with no response → restart TTS
+    zombie_timeout: int = 30      # seconds with no response → restart TTS
     check_interval: int = 30      # seconds between watchdog checks
     tts_container: str = "magpie-tts-multilingual"
     tts_grpc_addr: str = "localhost:50053"
