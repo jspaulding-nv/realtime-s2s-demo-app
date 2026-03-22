@@ -27,7 +27,7 @@ class RivaConfig:
 class WatchdogConfig:
     """TTS zombie watchdog configuration."""
     zombie_timeout: int = 30      # seconds with no response → restart TTS
-    check_interval: int = 30      # seconds between watchdog checks
+    check_interval: int = 10      # seconds between watchdog checks
     tts_container: str = "magpie-tts-multilingual"
     tts_grpc_addr: str = "localhost:50053"
     recovery_timeout: int = 120   # seconds to wait for TTS to become healthy
